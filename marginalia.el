@@ -223,7 +223,7 @@ determine it."
 
 (defsubst marginalia--truncate (str width)
   "Truncate string STR to WIDTH."
-  (truncate-string-to-width (car (split-string str "\n")) width 0 32 "…"))
+  (truncate-string-to-width str width 0 32 "…"))
 
 (defsubst marginalia--align (str)
   "Align STR at the right margin."
@@ -250,13 +250,56 @@ WIDTH is the format width. This can be specified as alternative to FORMAT."
   (when face (setq field `(propertize ,field 'face ,face)))
   field)
 
+(defsubst marginalia--first-line (str)
+  (car (split-string str "\n")))
+
+(defconst marginalia--advice-regexp
+  (rx bos
+      (1+ (seq (? "This function has ")
+               (or ":before" ":after" ":around" ":override"
+                   ":before-while" ":before-until" ":after-while"
+                   ":after-until" ":filter-args" ":filter-return")
+               " advice: " (0+ nonl) "\n"))
+      "\n")
+  "Regexp to match lines about advice in function documentation strings.")
+
+(defun marginalia--get-documentation (sym kind)
+  (let ((doc-alist (get sym 'marginalia--documentation)))
+    (unless doc-alist
+      (put sym 'marginalia--documentation
+           (setq doc-alist
+                 (append
+                  (when-let (doc (documentation-property sym 'group-documentation))
+                    (list (cons 'group (marginalia--first-line doc))))
+                  (when-let (doc (and (boundp sym) (documentation-property sym 'variable-documentation)))
+                    (list (cons 'variable (marginalia--first-line doc))))
+                  (when-let (doc (and (facep sym) (documentation-property sym 'face-documentation)))
+                    (list (cons 'face (marginalia--first-line doc))))
+                  (when-let (doc (and (fboundp sym) (ignore-errors (documentation sym))))
+                    (list (cons 'function (marginalia--first-line (replace-regexp-in-string
+                                                                   marginalia--advice-regexp "" doc)))))))))
+    (alist-get kind doc-alist)))
+
+(defvar marginalia--all-symbols nil)
+(mapatoms (lambda (sym) (push sym marginalia--all-symbols)))
+
+(letrec ((timer (run-with-idle-timer
+                 1 t
+                 (lambda ()
+                   (let ((n 1000))
+                     (while (and marginalia--all-symbols (> n 0))
+                       (marginalia--get-documentation (pop marginalia--all-symbols) 'function)
+                       (cl-decf n)))
+                   (unless marginalia--all-symbols
+                     (cancel-timer timer)))))))
+
 (defmacro marginalia--fields (&rest fields)
   "Format annotation FIELDS as a string with separators in between."
   `(marginalia--align (concat ,@(cdr (mapcan (lambda (field)
                                                (list 'marginalia--separator `(marginalia--field ,@field)))
                                              fields)))))
 
-(defun marginalia--documentation (str)
+(defun marginalia--format-documentation (str)
   "Format documentation string STR."
   (when str
     (marginalia--fields
@@ -302,16 +345,6 @@ This hash table is needed to speed up `marginalia-annotate-binding'.")
       (?f (marginalia-annotate-file cand-without-prefix))
       (_ (marginalia-annotate-virtual-buffer-class cand)))))
 
-(defconst marginalia--advice-regexp
-  (rx bos
-      (1+ (seq (? "This function has ")
-               (or ":before" ":after" ":around" ":override"
-                   ":before-while" ":before-until" ":after-while"
-                   ":after-until" ":filter-args" ":filter-return")
-               " advice: " (0+ nonl) "\n"))
-      "\n")
-  "Regexp to match lines about advice in function documentation strings.")
-
 ;; Taken from advice--make-docstring, is this robust?
 (defun marginalia--advised (fun)
   "Return t if function FUN is advised."
@@ -347,11 +380,6 @@ a face"
     (when (facep s) "a")
     (when (and (fboundp 'cl-find-class) (cl-find-class s)) "t"))))
 
-(defun marginalia--function-doc (sym)
-  "Documentation string of function SYM."
-  (when-let (doc (ignore-errors (documentation sym)))
-    (replace-regexp-in-string marginalia--advice-regexp "" doc)))
-
 (defun marginalia-annotate-symbol (cand)
   "Annotate symbol CAND with its documentation string."
   (when-let (sym (intern-soft cand))
@@ -360,9 +388,9 @@ a face"
      (marginalia--fields
       ((marginalia--symbol-class sym) :face 'marginalia-modified)
       ((cond
-        ((fboundp sym) (marginalia--function-doc sym))
-        ((facep sym) (documentation-property sym 'face-documentation))
-        (t (documentation-property sym 'variable-documentation)))
+        ((fboundp sym) (marginalia--get-documentation sym 'function))
+        ((facep sym) (marginalia--get-documentation sym 'face))
+        (t (marginalia--get-documentation sym 'variable)))
        :truncate marginalia-truncate-width :face 'marginalia-documentation)))))
 
 (defun marginalia-annotate-command (cand)
@@ -371,7 +399,7 @@ Similar to `marginalia-annotate-symbol', but does not show symbol class."
   (when-let (sym (intern-soft cand))
     (concat
      (marginalia-annotate-binding cand)
-     (marginalia--documentation (marginalia--function-doc sym)))))
+     (marginalia--format-documentation (marginalia--get-documentation sym 'function)))))
 
 (defun marginalia-annotate-imenu (cand)
   "Annotate imenu CAND with its documentation string."
@@ -390,7 +418,7 @@ Similar to `marginalia-annotate-symbol', but does not show symbol class."
             (print-escape-multibyte t))
         (prin1-to-string (if (boundp sym) (symbol-value sym) 'unbound)))
       :truncate (/ marginalia-truncate-width 3) :face 'marginalia-variable)
-     ((documentation-property sym 'variable-documentation)
+     ((marginalia--get-documentation sym 'variable)
       :truncate marginalia-truncate-width :face 'marginalia-documentation))))
 
 (defun marginalia-annotate-environment-variable (cand)
@@ -404,7 +432,7 @@ Similar to `marginalia-annotate-symbol', but does not show symbol class."
   (when-let (sym (intern-soft cand))
     (marginalia--fields
      ("abcdefghijklmNOPQRSTUVWXYZ" :face sym)
-     ((documentation-property sym 'face-documentation)
+     ((marginalia--get-documentation sym 'face)
       :truncate marginalia-truncate-width :face 'marginalia-documentation))))
 
 (defun marginalia-annotate-minor-mode (cand)
@@ -423,7 +451,7 @@ Similar to `marginalia-annotate-symbol', but does not show symbol class."
            (propertize "On" 'face 'marginalia-on)
          (propertize "Off" 'face 'marginalia-off)) :width 3)
       (lighter-str :width 14 :face 'marginalia-lighter)
-      ((marginalia--function-doc mode)
+      ((marginalia--get-documentation mode 'function)
        :truncate marginalia-truncate-width :face 'marginalia-documentation)))))
 
 (defun marginalia-annotate-package (cand)
@@ -444,19 +472,19 @@ Similar to `marginalia-annotate-symbol', but does not show symbol class."
 
 (defun marginalia-annotate-customize-group (cand)
   "Annotate customization group CAND with its documentation string."
-  (marginalia--documentation (documentation-property (intern cand) 'group-documentation)))
+  (marginalia--format-documentation (marginalia--get-documentation (intern cand) 'group)))
 
 (defun marginalia-annotate-input-method (cand)
   "Annotate input method CAND with its description."
-  (marginalia--documentation (nth 4 (assoc cand input-method-alist))))
+  (marginalia--format-documentation (nth 4 (assoc cand input-method-alist))))
 
 (defun marginalia-annotate-charset (cand)
   "Annotate charset CAND with its description."
-  (marginalia--documentation (charset-description (intern cand))))
+  (marginalia--format-documentation (charset-description (intern cand))))
 
 (defun marginalia-annotate-coding-system (cand)
   "Annotate coding system CAND with its description."
-  (marginalia--documentation (coding-system-doc-string (intern cand))))
+  (marginalia--format-documentation (coding-system-doc-string (intern cand))))
 
 (defun marginalia-annotate-buffer (cand)
   "Annotate buffer CAND with modification status, file name and major mode."
