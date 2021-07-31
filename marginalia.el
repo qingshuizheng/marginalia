@@ -322,6 +322,8 @@ for performance profiling of the annotators.")
 (defvar marginalia--separator "    "
   "Field separator.")
 
+(defvar marginalia--left-align nil)
+
 (defvar marginalia--margin nil
   "Right margin.")
 
@@ -348,11 +350,15 @@ for performance profiling of the annotators.")
     (when marginalia--margin
       (setq str (concat str marginalia--margin)))
     (concat " "
-            (propertize
-             " "
-             'display
-             `(space :align-to (- right ,marginalia-align-offset ,(string-width str))))
-            str)))
+            (if marginalia--left-align
+                " -- "
+              (propertize
+               " "
+               'display
+               `(space :align-to (- right ,marginalia-align-offset ,(string-width str)))))
+            (if marginalia--left-align
+                (replace-regexp-in-string " +" " " str)
+              str))))
 
 (cl-defmacro marginalia--field (field &key truncate format face width)
   "Format FIELD as a string according to some options.
@@ -951,6 +957,7 @@ looking for a regexp that matches the prompt."
                (marginalia-truncate-width (min (/ ,w 2) marginalia-truncate-width))
                (marginalia-align-offset (or marginalia-align-offset ,o))
                (marginalia--separator (if (>= ,w marginalia-separator-threshold) "    " " "))
+               (marginalia--left-align (< ,w (/ marginalia-separator-threshold 2)))
                (marginalia--margin (when (>= ,w (+ marginalia-margin-min marginalia-margin-threshold))
                                      (make-string (- ,w marginalia-margin-threshold) 32))))
            ,@body)))))
