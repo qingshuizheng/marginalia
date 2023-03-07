@@ -571,9 +571,11 @@ t cl-type"
   "Annotate command CAND with its documentation string.
 Similar to `marginalia-annotate-symbol', but does not show symbol class."
   (when-let (sym (intern-soft cand))
-    (concat
-     (marginalia-annotate-binding cand)
-     (marginalia--documentation (marginalia--function-doc sym)))))
+    (marginalia--fields
+     (:left (marginalia-annotate-binding cand))
+     ((if (string-suffix-p "-mode" cand) (marginalia--mode-state sym) "   "))
+     ((marginalia--function-doc sym)
+      :truncate 1.0 :face 'marginalia-documentation))))
 
 (defun marginalia-annotate-embark-keybinding (cand)
   "Annotate Embark keybinding CAND with its documentation string.
@@ -726,6 +728,12 @@ keybinding since CAND includes it."
        (get-char-code-property char 'general-category))
       :width 30 :face 'marginalia-documentation))))
 
+(defun marginalia--mode-state (mode)
+  "Return MODE state string."
+  (if (and (boundp mode) (symbol-value mode))
+      #("On " 0 2 (face marginalia-on))
+    #("Off" 0 3 (face marginalia-off))))
+
 (defun marginalia-annotate-minor-mode (cand)
   "Annotate minor-mode CAND with status and documentation string."
   (let* ((sym (intern-soft cand))
@@ -735,9 +743,7 @@ keybinding since CAND includes it."
          (lighter (cdr (assq mode minor-mode-alist)))
          (lighter-str (and lighter (string-trim (format-mode-line (cons t lighter))))))
     (marginalia--fields
-     ((if (and (boundp mode) (symbol-value mode))
-          (propertize "On" 'face 'marginalia-on)
-        (propertize "Off" 'face 'marginalia-off)) :width 3)
+     ((marginalia--mode-state mode))
      ((if (local-variable-if-set-p mode) "Local" "Global") :width 6 :face 'marginalia-type)
      (lighter-str :width 20 :face 'marginalia-lighter)
      ((marginalia--function-doc mode)
